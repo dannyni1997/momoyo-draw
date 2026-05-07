@@ -1,0 +1,7 @@
+{
+  "rewrites": [
+    { "source": "/api/lottery/spin",    "destination": "/api/lottery" },
+    { "source": "/api/admin/records",   "destination": "/api/lottery" },
+    { "source": "/api/admin/redeem",    "destination": "/api/lottery" }
+  ]
+}
