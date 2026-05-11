@@ -5,20 +5,31 @@ const supabase = createClient(
   process.env.SUPABASE_ANON_KEY
 );
  
-const CHATTECH_URL = 'https://iccup-bms.chattech.com/api/bms/pay/payment/list';
-const ACTIVITY_START = '2026-05-01';
-const ACTIVITY_END   = '2026-12-31';
+const CHATTECH_URL = 'https://iccup-bms.chattech.com/api/bms/order/order/list';
+const ACTIVITY_START = '2026-05-01 00:00:00';
+const ACTIVITY_END   = '2026-12-31 23:59:59';
+const TEST_CODE = 'TEST-597300';
  
 const PRIZES = [
-  { id: 1, name: 'RM50 现金大奖', emoji: '💰', prob: 1,  daily_limit: 2   },
-  { id: 2, name: '免费饮品券',    emoji: '🧋', prob: 15, daily_limit: 50  },
-  { id: 3, name: '品牌周边礼品', emoji: '🛍', prob: 9,  daily_limit: 10  },
-  { id: 4, name: '8折优惠券',    emoji: '🏷', prob: 25, daily_limit: 999 },
-  { id: 5, name: '积分 +50',     emoji: '⭐', prob: 50, daily_limit: 999 },
+  { id: 1, key: 'japan',  name_ms: 'Tiket Penerbangan ke Jepun', name_en: 'Japan Return Flight',  name_zh: '日本来回机票', emoji: '✈️', prob: 0.017, daily_limit: 1   },
+  { id: 2, key: 'matcha', name_ms: 'Tiket Percuma Matcha',       name_en: 'Free Matcha Voucher',  name_zh: '抹茶免单券',   emoji: '🍵', prob: 31.47, daily_limit: 272 },
+  { id: 3, key: 'disc15', name_ms: 'Diskaun 15%',                name_en: '15% Discount Voucher', name_zh: '15%折扣券',   emoji: '🏷', prob: 30.5,  daily_limit: 264 },
+  { id: 4, key: 'disc10', name_ms: 'Diskaun 10%',                name_en: '10% Discount Voucher', name_zh: '10%折扣券',   emoji: '🎫', prob: 38.0,  daily_limit: 321 },
 ];
  
 function genVoucherCode() {
-  return 'MYO-' + Math.random().toString(36).substring(2, 8).toUpperCase();
+  return 'MMY-' + Date.now().toString(36).toUpperCase().slice(-4) +
+         Math.random().toString(36).substring(2, 5).toUpperCase();
+}
+ 
+function weightedRandomSync() {
+  const total = PRIZES.reduce((a, p) => a + p.prob, 0);
+  let r = Math.random() * total;
+  for (const prize of PRIZES) {
+    r -= prize.prob;
+    if (r <= 0) return prize;
+  }
+  return PRIZES[3];
 }
  
 async function weightedDraw() {
@@ -29,18 +40,18 @@ async function weightedDraw() {
   for (const prize of PRIZES) {
     r -= prize.prob;
     if (r <= 0) {
-      if (prize.daily_limit < 999) {
+      if (prize.daily_limit < 9999) {
         const { count } = await supabase
           .from('lottery_records')
           .select('*', { count: 'exact', head: true })
           .eq('prize_id', prize.id)
           .gte('drawn_at', today);
-        if (count >= prize.daily_limit) continue;
+        if ((count ?? 0) >= prize.daily_limit) continue;
       }
       return prize;
     }
   }
-  return PRIZES[PRIZES.length - 1];
+  return PRIZES[3];
 }
  
 async function verifyOrder(orderNo) {
@@ -51,15 +62,18 @@ async function verifyOrder(orderNo) {
       'authorization': process.env.CHATTECH_TOKEN,
     },
     body: JSON.stringify({
-      keyword: orderNo,
+      orderQuery: orderNo,
+      orderStatus: 0,
+      orderStartTime: ACTIVITY_START,
+      orderEndTime: ACTIVITY_END,
+      orderPlatform: '',
+      paymentMethod: '',
+      pickupMethod: '',
+      refundType: '',
+      saleChannel: '',
+      storeId: '',
       pageIndex: 1,
       pageSize: 1,
-      payUpdateTimeGte: ACTIVITY_START,
-      payUpdateTimeLte: ACTIVITY_END,
-      status: '',
-      methodId: '',
-      payStoreId: '',
-      sceneId: '',
       selectedCompanyIdList: [],
       selectedOrgIdList: [],
     }),
@@ -67,7 +81,7 @@ async function verifyOrder(orderNo) {
   const json = await res.json();
   if (!json.successful || !json.data?.list?.length) return null;
   const order = json.data.list[0];
-  if (order.status !== 3) return null;
+  if (order.orderStatus !== 4) return null;
   if (order.orderNo !== orderNo) return null;
   return order;
 }
@@ -80,50 +94,97 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
  
   const { order_no } = req.body;
-  if (!order_no) return res.json({ success: false, reason: '请输入订单号' });
+  if (!order_no?.trim()) return res.json({
+    success: false,
+    reason_ms: 'Sila masukkan nombor pesanan.',
+    reason_en: 'Please enter order number.',
+    reason_zh: '请输入订单号。',
+  });
  
-  // 防重复
+  const cleanOrderNo = order_no.trim();
+ 
+  // ── 测试暗号模式 ──────────────────────────────────────
+  if (cleanOrderNo === TEST_CODE) {
+    const prize = weightedRandomSync();
+    return res.json({
+      success:       true,
+      test_mode:     true,
+      prize_key:     prize.key,
+      prize_name_ms: prize.name_ms,
+      prize_name_en: prize.name_en,
+      prize_name_zh: prize.name_zh,
+      prize_emoji:   prize.emoji,
+      voucher_code:  'TEST-ONLY-NO-RECORD',
+      store_name:    'Test Store',
+    });
+  }
+ 
+  // ── 正常流程 ──────────────────────────────────────────
   const { data: existing } = await supabase
     .from('lottery_records')
-    .select('prize_name, voucher_code')
-    .eq('order_no', order_no)
+    .select('prize_name_ms, prize_name_en, prize_name_zh, prize_emoji')
+    .eq('order_no', cleanOrderNo)
     .maybeSingle();
  
   if (existing) {
     return res.json({
       success: false,
-      reason: '该订单已参与过抽奖',
-      prize_name: existing.prize_name,
-      voucher_code: existing.voucher_code,
+      already_played: true,
+      reason_ms: 'Pesanan ini telah menyertai cabutan.',
+      reason_en: 'This order has already participated.',
+      reason_zh: '该订单已参与过抽奖。',
+      prize_name_ms: existing.prize_name_ms,
+      prize_name_en: existing.prize_name_en,
+      prize_name_zh: existing.prize_name_zh,
+      prize_emoji: existing.prize_emoji,
     });
   }
  
-  // 验证订单
   let order;
-  try { order = await verifyOrder(order_no); }
-  catch { return res.json({ success: false, reason: '验证服务暂时不可用，请稍后重试' }); }
-  if (!order) return res.json({ success: false, reason: '订单不存在或不在活动范围内' });
+  try { order = await verifyOrder(cleanOrderNo); }
+  catch {
+    return res.json({
+      success: false,
+      reason_ms: 'Perkhidmatan tidak tersedia. Sila cuba lagi.',
+      reason_en: 'Service unavailable. Please try again.',
+      reason_zh: '验证服务暂时不可用，请稍后重试。',
+    });
+  }
  
-  // 抽奖
+  if (!order) return res.json({
+    success: false,
+    reason_ms: 'Pesanan tidak dijumpai atau tidak layak.',
+    reason_en: 'Order not found or not eligible.',
+    reason_zh: '订单不存在或不在活动范围内。',
+  });
+ 
   const prize = await weightedDraw();
   const voucher = genVoucherCode();
  
   await supabase.from('lottery_records').insert({
-    order_no,
-    store_id:     order.storeId,
-    store_name:   order.storeName,
-    prize_id:     prize.id,
-    prize_name:   prize.name,
-    prize_emoji:  prize.emoji,
-    voucher_code: voucher,
+    order_no:      cleanOrderNo,
+    store_id:      order.storeId,
+    store_name:    order.storeName,
+    prize_id:      prize.id,
+    prize_key:     prize.key,
+    prize_name_ms: prize.name_ms,
+    prize_name_en: prize.name_en,
+    prize_name_zh: prize.name_zh,
+    prize_emoji:   prize.emoji,
+    voucher_code:  voucher,
   });
  
   return res.json({
-    success:      true,
-    prize_name:   prize.name,
-    prize_emoji:  prize.emoji,
-    voucher_code: voucher,
-    store_name:   order.storeName,
+    success:       true,
+    prize_key:     prize.key,
+    prize_name_ms: prize.name_ms,
+    prize_name_en: prize.name_en,
+    prize_name_zh: prize.name_zh,
+    prize_emoji:   prize.emoji,
+    voucher_code:  voucher,
+    store_name:    order.storeName,
   });
+}
+ 
 }
  
