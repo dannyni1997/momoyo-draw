@@ -52,7 +52,8 @@ async function weightedDraw() {
       return prize;
     }
   }
-  return PRIZES[3];
+  // 所有奖品今日已派完，返回谢谢惠顾
+  return PRIZES.find(p => p.key === 'thanks');
 }
  
 async function verifyOrder(orderNo) {
