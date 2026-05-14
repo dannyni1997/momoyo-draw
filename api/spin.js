@@ -90,6 +90,24 @@ async function weightedDraw() {
 
 async function verifyOrder(orderNo) {
   orderNo = orderNo.replace(/\s+/g, ''); // 去掉所有空格
+  const reqBody = {
+      orderQuery: orderNo,
+      orderStatus: 0,
+      orderStartTime: getTodayRange().start,
+      orderEndTime: getTodayRange().end,
+      orderPlatform: '',
+      paymentMethod: '',
+      pickupMethod: '',
+      refundType: '',
+      saleChannel: '',
+      storeId: '',
+      pageIndex: 1,
+      pageSize: 1,
+      selectedCompanyIdList: [],
+      selectedOrgIdList: [],
+  };
+  console.log('Request body:', JSON.stringify(reqBody));
+  console.log('Token used:', process.env.CHATTECH_TOKEN?.slice(0,8)+'...');
   const res = await fetch(CHATTECH_URL, {
     method: 'POST',
     headers: {
