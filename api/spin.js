@@ -159,13 +159,13 @@ async function verifyOrder(orderNo) {
     if (!json2.successful || !json2.data?.list?.length) return null;
     const order2 = json2.data.list[0];
     if (order2.orderStatus !== 4 && order2.orderStatus !== 3) return null;
-    if (order2.orderNo?.replace(/\s+/g,'') !== orderNo.replace(/\s+/g,'')) return null;
+    if (order2.orderNo?.replace(/\s+/g,'') !== cleanOrderNo.replace(/\s+/g,'')) return null;
     return order2;
   }
  
   const order = json.data.list[0];
   if (order.orderStatus !== 4 && order.orderStatus !== 3) return null;
-  if (order.orderNo?.replace(/\s+/g,'') !== orderNo.replace(/\s+/g,'')) return null;
+  if (order.orderNo?.replace(/\s+/g,'') !== cleanOrderNo.replace(/\s+/g,'')) return null;
   return order;
 }
  
@@ -186,7 +186,7 @@ export default async function handler(req, res) {
     });
   }
  
-  const cleanOrderNo = order_no.trim();
+  const cleanOrderNo = order_no.trim().replace(/\s+/g, '');
  
   // 测试暗号
   if (cleanOrderNo === TEST_CODE) {
@@ -274,3 +274,4 @@ export default async function handler(req, res) {
     store_name:    order.storeName,
   });
 }
+ 
