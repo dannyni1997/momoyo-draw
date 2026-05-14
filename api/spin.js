@@ -89,6 +89,7 @@ async function weightedDraw() {
 }
 
 async function verifyOrder(orderNo) {
+  orderNo = orderNo.replace(/\s+/g, ''); // 去掉所有空格
   const res = await fetch(CHATTECH_URL, {
     method: 'POST',
     headers: {
