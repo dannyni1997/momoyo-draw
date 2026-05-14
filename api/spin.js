@@ -99,10 +99,22 @@ async function verifyOrder(orderNo) {
     }),
   });
   const json = await res.json();
+  console.log('Chattech response:', JSON.stringify({
+    successful: json.successful,
+    total: json.data?.total,
+    firstOrder: json.data?.list?.[0] ? {
+      orderNo: json.data.list[0].orderNo,
+      orderStatus: json.data.list[0].orderStatus,
+      orderStatusShow: json.data.list[0].orderStatusShow,
+      storeName: json.data.list[0].storeName,
+    } : null
+  }));
   if (!json.successful || !json.data?.list?.length) return null;
   const order = json.data.list[0];
-  if (order.orderStatus !== 4) return null;
-  if (order.orderNo !== orderNo) return null;
+  // 接受状态 3 或 4（交易成功）
+  if (order.orderStatus !== 4 && order.orderStatus !== 3) return null;
+  // 宽松匹配：去掉空格后比较
+  if (order.orderNo?.replace(/\s/g,'') !== orderNo.replace(/\s/g,'')) return null;
   return order;
 }
  
