@@ -11,16 +11,25 @@ const ACTIVITY_END   = '2026-12-31 23:59:59';
 const TEST_CODE = 'TEST-597300';
  
 const PRIZES = [
-  { id: 1, key: 'japan',  name_ms: 'Tiket Penerbangan ke Jepun', name_en: 'Japan Return Flight',  name_zh: '日本来回机票', emoji: '✈️', prob: 0.017, daily_limit: 1   },
-  { id: 2, key: 'matcha', name_ms: 'Tiket Percuma Matcha',       name_en: 'Free Matcha Voucher',  name_zh: '抹茶免单券',   emoji: '🍵', prob: 31.47, daily_limit: 272 },
-  { id: 3, key: 'disc15', name_ms: 'Diskaun 15%',                name_en: '15% Discount Voucher', name_zh: '15%折扣券',   emoji: '🏷', prob: 30.5,  daily_limit: 264 },
-  { id: 4, key: 'disc10', name_ms: 'Diskaun 10%',                name_en: '10% Discount Voucher', name_zh: '10%折扣券',   emoji: '🎫', prob: 38.0,  daily_limit: 321 },
-  { id: 5, key: 'thanks', name_ms: 'Terima Kasih',               name_en: 'Thank You',            name_zh: '谢谢惠顾',    emoji: '😊', prob: 0.0,   daily_limit: 999 },
+  { id: 1, key: 'japan',  name_ms: 'Tiket Penerbangan ke Jepun', name_en: 'Japan Return Flight',  name_zh: '日本来回机票', emoji: '✈️', prob: 0.0071,   weekly_limit: 1   },
+  { id: 2, key: 'vivo',   name_ms: 'VIVO Smartphone',            name_en: 'VIVO Smartphone',      name_zh: 'VIVO智能手机', emoji: '📱', prob: 0.0071,   weekly_limit: 1   },
+  { id: 3, key: 'tng',    name_ms: 'RM500 TNG eWallet',          name_en: 'RM500 TNG eWallet',    name_zh: 'RM500电子钱包',emoji: '💳', prob: 0.0143,   weekly_limit: 2   },
+  { id: 4, key: 'drinks', name_ms: 'Minuman Percuma Setahun',    name_en: 'Free Drinks for a Year',name_zh: '全年免费饮品', emoji: '🍹', prob: 0.0571,   weekly_limit: 8   },
+  { id: 5, key: 'disc15', name_ms: 'Diskaun 15%',                name_en: '15% Discount Voucher', name_zh: '15%折扣券',   emoji: '🏷', prob: 99.9144,  weekly_limit: 9999},
 ];
  
 function genVoucherCode() {
   return 'MMY-' + Date.now().toString(36).toUpperCase().slice(-4) +
          Math.random().toString(36).substring(2, 5).toUpperCase();
+}
+ 
+function getWeekStart() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(now.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+  return monday.toISOString();
 }
  
 function weightedRandomSync() {
@@ -30,30 +39,39 @@ function weightedRandomSync() {
     r -= prize.prob;
     if (r <= 0) return prize;
   }
-  return PRIZES[3];
+  return PRIZES[4];
 }
  
 async function weightedDraw() {
-  const today = new Date().toISOString().slice(0, 10);
+  const weekStart = getWeekStart();
+  const japanActive = process.env.JAPAN_ACTIVE === 'true';
   const total = PRIZES.reduce((a, p) => a + p.prob, 0);
   let r = Math.random() * total;
  
   for (const prize of PRIZES) {
     r -= prize.prob;
     if (r <= 0) {
-      if (prize.daily_limit < 999) {
+      // 机票和VIVO需要手动开关激活
+      if (prize.key === 'japan' && !japanActive) {
+        return PRIZES[4];
+      }
+      if (prize.key === 'vivo' && process.env.VIVO_ACTIVE !== 'true') {
+        return PRIZES[4];
+      }
+      if (prize.weekly_limit < 9999) {
         const { count } = await supabase
           .from('lottery_records')
           .select('*', { count: 'exact', head: true })
           .eq('prize_id', prize.id)
-          .gte('drawn_at', today);
-        if ((count ?? 0) >= prize.daily_limit) continue;
+          .gte('drawn_at', weekStart);
+        if ((count ?? 0) >= prize.weekly_limit) {
+          return PRIZES[4];
+        }
       }
       return prize;
     }
   }
-  // 所有奖品今日已派完，返回谢谢惠顾
-  return PRIZES.find(p => p.key === 'thanks');
+  return PRIZES[4];
 }
  
 async function verifyOrder(orderNo) {
@@ -107,8 +125,12 @@ export default async function handler(req, res) {
  
   const cleanOrderNo = order_no.trim();
  
+  // 测试暗号
   if (cleanOrderNo === TEST_CODE) {
-    const prize = weightedRandomSync();
+    const japanActive = process.env.JAPAN_ACTIVE === 'true';
+    let prize = weightedRandomSync();
+    if (prize.key === 'japan' && !japanActive) prize = PRIZES[4];
+    if (prize.key === 'vivo' && process.env.VIVO_ACTIVE !== 'true') prize = PRIZES[4];
     return res.json({
       success:       true,
       test_mode:     true,
@@ -117,11 +139,12 @@ export default async function handler(req, res) {
       prize_name_en: prize.name_en,
       prize_name_zh: prize.name_zh,
       prize_emoji:   prize.emoji,
-      voucher_code:  'TEST-ONLY-NO-RECORD',
+      voucher_code:  'TEST-ONLY',
       store_name:    'Test Store',
     });
   }
  
+  // 防重复
   const { data: existing } = await supabase
     .from('lottery_records')
     .select('prize_name_ms, prize_name_en, prize_name_zh, prize_emoji')
@@ -130,18 +153,15 @@ export default async function handler(req, res) {
  
   if (existing) {
     return res.json({
-      success:       false,
+      success:        false,
       already_played: true,
-      reason_ms:     'Pesanan ini telah menyertai cabutan.',
-      reason_en:     'This order has already participated.',
-      reason_zh:     '该订单已参与过抽奖。',
-      prize_name_ms: existing.prize_name_ms,
-      prize_name_en: existing.prize_name_en,
-      prize_name_zh: existing.prize_name_zh,
-      prize_emoji:   existing.prize_emoji,
+      reason_ms:      'Pesanan ini telah menyertai cabutan.',
+      reason_en:      'This order has already participated.',
+      reason_zh:      '该订单已参与过抽奖。',
     });
   }
  
+  // 验证订单
   let order;
   try {
     order = await verifyOrder(cleanOrderNo);
@@ -163,6 +183,7 @@ export default async function handler(req, res) {
     });
   }
  
+  // 抽奖
   const prize = await weightedDraw();
   const voucher = genVoucherCode();
  
