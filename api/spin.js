@@ -198,7 +198,7 @@ export default async function handler(req, res) {
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
 
-  const { order_no } = req.body;
+  const { order_no, pre_verified, store_name } = req.body;
   if (!order_no || !order_no.trim()) {
     return res.json({
       success: false,
@@ -296,3 +296,4 @@ export default async function handler(req, res) {
     store_name:    order.storeName,
   });
 }
+
