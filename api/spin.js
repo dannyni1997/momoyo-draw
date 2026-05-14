@@ -8,6 +8,17 @@ const supabase = createClient(
 const CHATTECH_URL = 'https://iccup-bms.chattech.com/api/bms/order/order/list';
 const ACTIVITY_START = '2026-05-01 00:00:00';
 const ACTIVITY_END   = '2026-12-31 23:59:59';
+ 
+function getTodayRange() {
+  const now = new Date();
+  const y = now.getFullYear();
+  const m = String(now.getMonth()+1).padStart(2,'0');
+  const d = String(now.getDate()).padStart(2,'0');
+  return {
+    start: `${y}-${m}-${d} 00:00:00`,
+    end:   `${y}-${m}-${d} 23:59:59`,
+  };
+}
 const TEST_CODE = 'TEST-597300';
  
 const PRIZES = [
@@ -84,8 +95,8 @@ async function verifyOrder(orderNo) {
     body: JSON.stringify({
       orderQuery: orderNo,
       orderStatus: 0,
-      orderStartTime: ACTIVITY_START,
-      orderEndTime: ACTIVITY_END,
+      orderStartTime: getTodayRange().start,
+      orderEndTime: getTodayRange().end,
       orderPlatform: '',
       paymentMethod: '',
       pickupMethod: '',
@@ -109,12 +120,52 @@ async function verifyOrder(orderNo) {
       storeName: json.data.list[0].storeName,
     } : null
   }));
-  if (!json.successful || !json.data?.list?.length) return null;
+ 
+  // 今天找不到，扩大到活动全范围再查一次
+  if (!json.successful || !json.data?.list?.length) {
+    const res2 = await fetch(CHATTECH_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'authorization': process.env.CHATTECH_TOKEN,
+      },
+      body: JSON.stringify({
+        orderQuery: orderNo,
+        orderStatus: 0,
+        orderStartTime: ACTIVITY_START,
+        orderEndTime: ACTIVITY_END,
+        orderPlatform: '',
+        paymentMethod: '',
+        pickupMethod: '',
+        refundType: '',
+        saleChannel: '',
+        storeId: '',
+        pageIndex: 1,
+        pageSize: 1,
+        selectedCompanyIdList: [],
+        selectedOrgIdList: [],
+      }),
+    });
+    const json2 = await res2.json();
+    console.log('Chattech wide range response:', JSON.stringify({
+      successful: json2.successful,
+      total: json2.data?.total,
+      firstOrder: json2.data?.list?.[0] ? {
+        orderNo: json2.data.list[0].orderNo,
+        orderStatus: json2.data.list[0].orderStatus,
+        storeName: json2.data.list[0].storeName,
+      } : null
+    }));
+    if (!json2.successful || !json2.data?.list?.length) return null;
+    const order2 = json2.data.list[0];
+    if (order2.orderStatus !== 4 && order2.orderStatus !== 3) return null;
+    if (order2.orderNo?.replace(/\s+/g,'') !== orderNo.replace(/\s+/g,'')) return null;
+    return order2;
+  }
+ 
   const order = json.data.list[0];
-  // 接受状态 3 或 4（交易成功）
   if (order.orderStatus !== 4 && order.orderStatus !== 3) return null;
-  // 宽松匹配：去掉空格后比较
-  if (order.orderNo?.replace(/\s/g,'') !== orderNo.replace(/\s/g,'')) return null;
+  if (order.orderNo?.replace(/\s+/g,'') !== orderNo.replace(/\s+/g,'')) return null;
   return order;
 }
  
